@@ -5,7 +5,7 @@ import User from "../models/User.js";
 const router = express.Router();
 
 function dbAvailable() {
-  // mongoose.connection.readyState === 1 means connected
+  // 1 = connected
   return mongoose.connection && mongoose.connection.readyState === 1;
 }
 

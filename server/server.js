@@ -14,54 +14,57 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Determine MongoDB URI
+// Determine MongoDB URI and flags
 const mongoEnvVar = process.env.MONGO_URI || process.env.MONGODB_URI;
 const skipDb = process.env.SKIP_DB_ON_MISSING === "true";
 
-// track DB status
+// track DB status via mongoose.connection.readyState
 let dbConnected = false;
+mongoose.connection.on("connected", () => {
+  dbConnected = true;
+  console.log("MongoDB connection established");
+});
+mongoose.connection.on("disconnected", () => {
+  dbConnected = false;
+  console.warn("MongoDB disconnected");
+});
+mongoose.connection.on("error", (err) => {
+  dbConnected = false;
+  console.error("MongoDB connection error:", err);
+});
 
+// Attempt connection unless explicitly skipped
 if (!mongoEnvVar) {
   console.warn("Warning: MONGO_URI not set in environment.");
   console.warn(" - For local development you can keep /workspaces/velision-new/server/.env.");
   console.warn(" - For deployments (Render, Heroku, etc.) set the MONGO_URI in the service environment variables.");
-  if (process.env.NODE_ENV === "production" && !skipDb) {
-    console.error("No MongoDB URI provided in production. The server will continue running, but DB operations will return 503.");
-    // do NOT exit; continue so the process can stay up for static routes / health checks
-  }
-  if (!skipDb) {
-    // Attempt fallback local DB for convenience in dev
-    mongoose
-      .connect("mongodb://127.0.0.1:27017/velision", { useNewUrlParser: true, useUnifiedTopology: true })
-      .then(() => {
-        console.log("MongoDB connected (fallback local)");
-        dbConnected = true;
-      })
-      .catch((err) => {
-        console.error("MongoDB connection error (fallback local):", err);
-        dbConnected = false;
-        // Do not exit; routes will handle unavailable DB.
-      });
+  if (skipDb) {
+    console.warn("SKIP_DB_ON_MISSING is true; skipping DB connection attempt.");
   } else {
-    console.warn("SKIP_DB_ON_MISSING is true, skipping DB connection.");
+    // Try fallback local DB (useful in dev). Do not exit on failure.
+    const fallback = "mongodb://127.0.0.1:27017/velision";
+    console.log("Attempting fallback local DB:", fallback);
+    mongoose
+      .connect(fallback)
+      .catch((err) => {
+        console.error("Fallback local DB connection failed:", err);
+        // keep process running; DB endpoints will return 503 until connected
+      });
   }
 } else {
-  // Use provided URI
-  mongoose
-    .connect(mongoEnvVar, { useNewUrlParser: true, useUnifiedTopology: true })
-    .then(() => {
-      console.log("MongoDB connected");
-      dbConnected = true;
-    })
-    .catch((err) => {
-      console.error("MongoDB connection error:", err);
-      dbConnected = false;
-      // Do not exit; routes will handle unavailable DB.
-    });
+  // Use provided URI; do not exit the process on failure
+  mongoose.connect(mongoEnvVar).catch((err) => {
+    console.error("MongoDB connection attempt failed:", err);
+    // keep process running; DB endpoints will return 503 until connected
+  });
 }
 
-// expose DB status to other modules (simple approach)
-app.set("dbConnected", () => dbConnected);
+// helper to check DB availability from routes
+function isDbAvailable() {
+  // mongoose.connection.readyState === 1 means connected
+  return mongoose.connection && mongoose.connection.readyState === 1;
+}
+app.set("isDbAvailable", isDbAvailable);
 
 // Routes
 import userRoutes from "./routes/userRoutes.js";
