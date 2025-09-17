@@ -9,9 +9,16 @@ app.use(cors());
 app.use(express.json());
 
 // Connect DB
+if (!process.env.MONGO_URI) {
+  console.error("MONGO_URI not set in .env");
+  process.exit(1);
+}
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("MongoDB connected"))
-  .catch(err => console.log(err));
+  .catch(err => {
+    console.error("MongoDB connection error:", err);
+    process.exit(1);
+  });
 
 // Routes
 
