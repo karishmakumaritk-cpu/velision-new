@@ -18,22 +18,29 @@ app.use(express.json());
 const mongoEnvVar = process.env.MONGO_URI || process.env.MONGODB_URI;
 const skipDb = process.env.SKIP_DB_ON_MISSING === "true";
 
+// track DB status
+let dbConnected = false;
+
 if (!mongoEnvVar) {
   console.warn("Warning: MONGO_URI not set in environment.");
   console.warn(" - For local development you can keep /workspaces/velision-new/server/.env.");
   console.warn(" - For deployments (Render, Heroku, etc.) set the MONGO_URI in the service environment variables.");
   if (process.env.NODE_ENV === "production" && !skipDb) {
-    console.error("No MongoDB URI provided in production. Exiting.");
-    process.exit(1);
+    console.error("No MongoDB URI provided in production. The server will continue running, but DB operations will return 503.");
+    // do NOT exit; continue so the process can stay up for static routes / health checks
   }
   if (!skipDb) {
-    // Use fallback for local dev
+    // Attempt fallback local DB for convenience in dev
     mongoose
       .connect("mongodb://127.0.0.1:27017/velision", { useNewUrlParser: true, useUnifiedTopology: true })
-      .then(() => console.log("MongoDB connected (fallback local)"))
+      .then(() => {
+        console.log("MongoDB connected (fallback local)");
+        dbConnected = true;
+      })
       .catch((err) => {
         console.error("MongoDB connection error (fallback local):", err);
-        if (process.env.NODE_ENV === "production") process.exit(1);
+        dbConnected = false;
+        // Do not exit; routes will handle unavailable DB.
       });
   } else {
     console.warn("SKIP_DB_ON_MISSING is true, skipping DB connection.");
@@ -42,12 +49,19 @@ if (!mongoEnvVar) {
   // Use provided URI
   mongoose
     .connect(mongoEnvVar, { useNewUrlParser: true, useUnifiedTopology: true })
-    .then(() => console.log("MongoDB connected"))
+    .then(() => {
+      console.log("MongoDB connected");
+      dbConnected = true;
+    })
     .catch((err) => {
       console.error("MongoDB connection error:", err);
-      if (process.env.NODE_ENV === "production" && !skipDb) process.exit(1);
+      dbConnected = false;
+      // Do not exit; routes will handle unavailable DB.
     });
 }
+
+// expose DB status to other modules (simple approach)
+app.set("dbConnected", () => dbConnected);
 
 // Routes
 import userRoutes from "./routes/userRoutes.js";
