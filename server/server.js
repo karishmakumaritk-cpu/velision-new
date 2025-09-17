@@ -2,8 +2,14 @@ import express from "express";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
 import cors from "cors";
+import path from "path";
+import { fileURLToPath } from "url";
 
-dotenv.config();
+dotenv.config({
+  // ensure we load the .env located alongside this file, regardless of cwd
+  path: path.join(path.dirname(fileURLToPath(import.meta.url)), ".env"),
+});
+
 const app = express();
 app.use(cors());
 app.use(express.json());
