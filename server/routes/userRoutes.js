@@ -3,15 +3,22 @@ import mongoose from "mongoose";
 import User from "../models/User.js";
 
 const router = express.Router();
+const skipDb = process.env.SKIP_DB_ON_MISSING === "true";
 
 function dbAvailable() {
-  // 1 = connected
+  // mongoose.connection.readyState === 1 means connected
   return mongoose.connection && mongoose.connection.readyState === 1;
 }
 
 // GET all users
 router.get("/", async (req, res) => {
-  if (!dbAvailable()) return res.status(503).json({ error: "Database unavailable" });
+  if (!dbAvailable()) {
+    if (skipDb) {
+      // Simulated safe response for frontend when DB is intentionally skipped
+      return res.json([]);
+    }
+    return res.status(503).json({ error: "Database unavailable" });
+  }
   try {
     const users = await User.find();
     res.json(users);
@@ -22,7 +29,14 @@ router.get("/", async (req, res) => {
 
 // POST create user
 router.post("/", async (req, res) => {
-  if (!dbAvailable()) return res.status(503).json({ error: "Database unavailable" });
+  if (!dbAvailable()) {
+    if (skipDb) {
+      // Return a simulated created resource (not persisted)
+      const simulatedUser = { ...req.body, simulated: true, createdAt: new Date().toISOString() };
+      return res.status(201).json(simulatedUser);
+    }
+    return res.status(503).json({ error: "Database unavailable" });
+  }
   try {
     const user = new User(req.body);
     await user.save();
