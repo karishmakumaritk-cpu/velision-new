@@ -17,54 +17,53 @@ app.use(express.json());
 // Determine MongoDB URI and flags
 const mongoEnvVar = process.env.MONGO_URI || process.env.MONGODB_URI;
 const skipDb = process.env.SKIP_DB_ON_MISSING === "true";
+const NODE_ENV = process.env.NODE_ENV || "development";
 
-// track DB status via mongoose.connection.readyState
-let dbConnected = false;
+if (!mongoEnvVar) {
+  console.warn("Warning: MONGO_URI not set in environment.");
+  console.warn(" - For local development keep /workspaces/velision-new/server/.env or set MONGO_URI.");
+  console.warn(" - For deployments (Render, Heroku, etc.) set MONGO_URI in service environment variables.");
+  if (skipDb) {
+    console.warn("SKIP_DB_ON_MISSING=true — skipping DB connection attempt.");
+  } else {
+    console.info("Will attempt fallback local DB in non-production; in production the app will continue running but DB endpoints return 503 until a DB is available.");
+  }
+}
+
+// Track DB status via mongoose connection readyState
+function isDbAvailable() {
+  // 1 = connected
+  return mongoose.connection && mongoose.connection.readyState === 1;
+}
+
 mongoose.connection.on("connected", () => {
-  dbConnected = true;
-  console.log("MongoDB connection established");
+  console.log("MongoDB connected");
 });
 mongoose.connection.on("disconnected", () => {
-  dbConnected = false;
   console.warn("MongoDB disconnected");
 });
 mongoose.connection.on("error", (err) => {
-  dbConnected = false;
   console.error("MongoDB connection error:", err);
 });
 
 // Attempt connection unless explicitly skipped
-if (!mongoEnvVar) {
-  console.warn("Warning: MONGO_URI not set in environment.");
-  console.warn(" - For local development you can keep /workspaces/velision-new/server/.env.");
-  console.warn(" - For deployments (Render, Heroku, etc.) set the MONGO_URI in the service environment variables.");
-  if (skipDb) {
-    console.warn("SKIP_DB_ON_MISSING is true; skipping DB connection attempt.");
+if (!skipDb) {
+  const connectUri = mongoEnvVar || (NODE_ENV === "production" ? null : "mongodb://127.0.0.1:27017/velision");
+
+  if (!connectUri) {
+    // No URI available and we're not allowed to connect — continue without DB.
+    console.warn("No MongoDB URI provided and not allowed to fallback. DB operations will return 503.");
   } else {
-    // Try fallback local DB (useful in dev). Do not exit on failure.
-    const fallback = "mongodb://127.0.0.1:27017/velision";
-    console.log("Attempting fallback local DB:", fallback);
     mongoose
-      .connect(fallback)
+      .connect(connectUri, { autoIndex: true })
       .catch((err) => {
-        console.error("Fallback local DB connection failed:", err);
-        // keep process running; DB endpoints will return 503 until connected
+        // Log error but DO NOT exit — app will keep running and routes will handle DB-unavailable state.
+        console.error("Initial MongoDB connection attempt failed:", err);
       });
   }
 } else {
-  // Use provided URI; do not exit the process on failure
-  mongoose.connect(mongoEnvVar).catch((err) => {
-    console.error("MongoDB connection attempt failed:", err);
-    // keep process running; DB endpoints will return 503 until connected
-  });
+  console.warn("SKIP_DB_ON_MISSING=true — DB connection intentionally skipped.");
 }
-
-// helper to check DB availability from routes
-function isDbAvailable() {
-  // mongoose.connection.readyState === 1 means connected
-  return mongoose.connection && mongoose.connection.readyState === 1;
-}
-app.set("isDbAvailable", isDbAvailable);
 
 // Routes
 import userRoutes from "./routes/userRoutes.js";
@@ -73,8 +72,23 @@ app.get("/", (req, res) => {
   res.send("Velision API running");
 });
 
+// Provide middleware to expose DB availability in requests
+app.use((req, _res, next) => {
+  req.isDbAvailable = isDbAvailable;
+  next();
+});
+
 // API routes
 app.use("/api/users", userRoutes);
+
+// Simple health check for readiness (returns 200 even if DB missing, use /health/db for DB-specific check)
+app.get("/health", (_req, res) => res.json({ status: "ok", dbConnected: isDbAvailable() }));
+
+// DB health endpoint
+app.get("/health/db", (_req, res) => {
+  if (isDbAvailable()) return res.json({ db: "connected" });
+  return res.status(503).json({ db: "unavailable" });
+});
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
