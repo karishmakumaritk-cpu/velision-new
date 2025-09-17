@@ -1,0 +1,6 @@
+# ...existing rules...
+
+# local envs
+/server/.env
+/client/.env
+.env

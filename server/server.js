@@ -5,6 +5,7 @@ import cors from "cors";
 import path from "path";
 import { fileURLToPath } from "url";
 
+// Load .env
 dotenv.config({
   path: path.join(path.dirname(fileURLToPath(import.meta.url)), ".env"),
 });
@@ -13,25 +14,43 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Determine DB config
 const NODE_ENV = process.env.NODE_ENV || "development";
 const skipDb = process.env.SKIP_DB_ON_MISSING === "true";
-const mongoEnvVar = process.env.MONGO_URI || process.env.MONGODB_URI || null;
+const rawEnvValue = process.env.MONGO_URI ?? process.env.MONGODB_URI ?? null;
+
+function sanitizeEnvValue(val) {
+  if (typeof val !== "string") return null;
+  // remove surrounding quotes and whitespace
+  return val.replace(/^["']|["']$/g, "").trim() || null;
+}
+function isValidMongoUri(val) {
+  return typeof val === "string" && (val.startsWith("mongodb://") || val.startsWith("mongodb+srv://"));
+}
+
+let mongoEnvVar = sanitizeEnvValue(rawEnvValue);
+
+if (mongoEnvVar && !isValidMongoUri(mongoEnvVar)) {
+  console.error("Invalid MONGO_URI scheme detected. Expected 'mongodb://' or 'mongodb+srv://'.");
+  console.error("Provided MONGO_URI (trimmed):", mongoEnvVar.slice(0, 60) + (mongoEnvVar.length > 60 ? "..." : ""));
+  // Treat as missing so we don't pass an invalid string to mongoose
+  mongoEnvVar = null;
+}
 
 if (!mongoEnvVar) {
-  console.warn("Warning: MONGO_URI not set in environment.");
-  console.warn(" - For local development keep /workspaces/velision-new/server/.env or set MONGO_URI.");
-  console.warn(" - For deployments (Render, Heroku, etc.) set MONGO_URI in service environment variables.");
+  console.warn("Warning: MONGO_URI not set or invalid in environment.");
+  console.warn(" - For local development keep /workspaces/velision-new/server/.env or set a valid MONGO_URI.");
+  console.warn(" - For deployments (Render, Heroku, etc.) set MONGO_URI in the service environment variables.");
   if (skipDb) {
     console.warn("SKIP_DB_ON_MISSING=true — skipping DB connection attempt.");
   } else if (NODE_ENV === "production") {
-    console.warn("Running in production without MONGO_URI — server will continue running but DB endpoints will return 503 until a DB connects.");
+    // CHANGED: do not exit in production; continue running and return 503 on DB routes.
+    console.warn("Running in production without a valid MONGO_URI. The server will continue running, but DB endpoints will return 503 until a DB is available.");
   } else {
-    console.info("No MONGO_URI found — will attempt fallback local DB for development.");
+    console.info("No valid MONGO_URI found — will attempt fallback local DB for development.");
   }
 }
 
-// Decide whether to attempt connection
+// Decide connection URI: prefer validated env var; fallback to local only when allowed
 const connectUri = mongoEnvVar || (!skipDb && NODE_ENV !== "production" ? "mongodb://127.0.0.1:27017/velision" : null);
 
 if (connectUri) {
@@ -40,10 +59,10 @@ if (connectUri) {
     .then(() => console.log("MongoDB connected"))
     .catch((err) => {
       console.error("MongoDB connection error:", err);
-      // Do not exit; keep process running. DB endpoints will return 503 until connected.
+      // Do not exit the process; DB endpoints will return 503 until a connection is established.
     });
 } else {
-  console.warn("No MongoDB connection attempted (connectUri is null).");
+  console.warn("No MongoDB connection attempted (connectUri is null). DB endpoints will return 503 until configured.");
 }
 
 // Track DB availability using mongoose.connection.readyState
