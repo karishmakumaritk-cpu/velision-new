@@ -4,3 +4,13 @@
 /server/.env
 /client/.env
 .env
+
+# dependencies
+node_modules/
+
+# production builds
+/client/build/
+
+# cache
+.cache/
+/.cache/
