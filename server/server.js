@@ -2,6 +2,7 @@ import express from "express";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
 import cors from "cors";
+import helmet from "helmet";
 import path from "path";
 import { fileURLToPath } from "url";
 
@@ -13,6 +14,51 @@ dotenv.config({
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Trust proxy so req.secure and x-forwarded-proto are reliable behind load balancers
+app.set("trust proxy", true);
+
+// Add security headers including HSTS (maxAge 1 year). In development you can disable HSTS by NODE_ENV !== 'production'.
+app.use(
+  helmet({
+    // enable HSTS in production only via helmet.hsts below
+  })
+);
+
+// apply HSTS manually in production (helmet.hsts options)
+if (process.env.NODE_ENV === "production") {
+  app.use(
+    helmet.hsts({
+      maxAge: 31536000, // 1 year
+      includeSubDomains: true,
+      preload: true,
+    })
+  );
+}
+
+// Redirect HTTP to HTTPS when in production (use X-Forwarded-Proto from proxy)
+app.use((req, res, next) => {
+  const isSecure =
+    req.secure ||
+    (req.headers && req.headers["x-forwarded-proto"] && req.headers["x-forwarded-proto"].split(",")[0] === "https");
+  if (process.env.NODE_ENV === "production" && !isSecure) {
+    // Validate host header
+    const host = req.headers.host;
+    // Host must be a non-empty string and match basic hostname pattern
+    const validHost = typeof host === "string" && /^[a-zA-Z0-9.-]+(:\d+)?$/.test(host);
+    if (validHost) {
+      return res.redirect(301, `https://${host}${req.originalUrl}`);
+    } else {
+      // Optionally log the error for debugging
+      console.warn("Invalid or missing host header for HTTPS redirect:", host);
+      // Fallback: send 400 Bad Request or redirect to a default domain
+      return res.status(400).send("Bad Request: Invalid Host Header");
+      // Or, to redirect to a default domain:
+      // return res.redirect(301, `https://example.com${req.originalUrl}`);
+    }
+  }
+  next();
+});
 
 const NODE_ENV = process.env.NODE_ENV || "development";
 const skipDb = process.env.SKIP_DB_ON_MISSING === "true";
