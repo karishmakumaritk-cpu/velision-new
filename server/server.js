@@ -42,8 +42,20 @@ app.use((req, res, next) => {
     req.secure ||
     (req.headers && req.headers["x-forwarded-proto"] && req.headers["x-forwarded-proto"].split(",")[0] === "https");
   if (process.env.NODE_ENV === "production" && !isSecure) {
-    // 301 redirect to same host with https
-    return res.redirect(301, `https://${req.headers.host}${req.originalUrl}`);
+    // Validate host header
+    const host = req.headers.host;
+    // Host must be a non-empty string and match basic hostname pattern
+    const validHost = typeof host === "string" && /^[a-zA-Z0-9.-]+(:\d+)?$/.test(host);
+    if (validHost) {
+      return res.redirect(301, `https://${host}${req.originalUrl}`);
+    } else {
+      // Optionally log the error for debugging
+      console.warn("Invalid or missing host header for HTTPS redirect:", host);
+      // Fallback: send 400 Bad Request or redirect to a default domain
+      return res.status(400).send("Bad Request: Invalid Host Header");
+      // Or, to redirect to a default domain:
+      // return res.redirect(301, `https://example.com${req.originalUrl}`);
+    }
   }
   next();
 });
